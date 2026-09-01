@@ -30,6 +30,67 @@ pub fn truncate_for_preview(line: &str) -> String {
     }
 }
 
+/// Soft-wrap a single logical line into display rows of at most `width` chars.
+pub fn wrap_to_width(line: &str, width: usize) -> Vec<String> {
+    if width == 0 {
+        return vec![String::new()];
+    }
+    let chars: Vec<char> = line.chars().collect();
+    if chars.is_empty() {
+        return vec![String::new()];
+    }
+    chars
+        .chunks(width)
+        .map(|chunk| chunk.iter().collect())
+        .collect()
+}
+
+/// Build the visible output rows for a viewport.
+///
+/// When `follow` is true, fills from the **end** of the buffer so the newest
+/// content stays on screen even if soft-wrapping expands long lines. The old
+/// fullscreen path took the last N *logical* lines and then wrapped them,
+/// which pushed the real tail (errors) below the clip region.
+pub fn visible_output_rows(
+    lines: &[String],
+    width: usize,
+    height: usize,
+    follow: bool,
+    scroll: usize,
+) -> Vec<String> {
+    if height == 0 || lines.is_empty() {
+        return Vec::new();
+    }
+    let width = width.max(1);
+
+    if follow {
+        let mut rows_rev: Vec<String> = Vec::new();
+        for line in lines.iter().rev() {
+            let mut wrapped = wrap_to_width(line, width);
+            while let Some(row) = wrapped.pop() {
+                rows_rev.push(row);
+                if rows_rev.len() >= height {
+                    rows_rev.reverse();
+                    return rows_rev;
+                }
+            }
+        }
+        rows_rev.reverse();
+        return rows_rev;
+    }
+
+    let mut rows: Vec<String> = Vec::new();
+    for line in lines.iter().skip(scroll) {
+        for row in wrap_to_width(line, width) {
+            rows.push(row);
+            if rows.len() >= height {
+                return rows;
+            }
+        }
+    }
+    rows
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OutputScroll {
     Up,
@@ -170,5 +231,33 @@ mod tests {
         let mut follow = false;
         leave_fullscreen_output(&mut follow);
         assert!(follow);
+    }
+
+    #[test]
+    fn follow_keeps_newest_rows_when_lines_wrap() {
+        // Mimic fullscreen: tall viewport of logical lines that wrap to more
+        // rows than the height — the error at the end must still appear.
+        let lines = vec![
+            "noise".into(),
+            "x".repeat(30), // wraps to 3 rows at width 10
+            "x".repeat(30),
+            "CMake Error: Ninja not found".into(),
+        ];
+        let rows = visible_output_rows(&lines, 10, 4, true, 0);
+        assert_eq!(rows.len(), 4);
+        let joined = rows.join("");
+        assert!(
+            joined.contains("CMake Error") && joined.contains("Ninja not found"),
+            "expected error in visible rows, got {rows:?}"
+        );
+        // Last visible content comes from the final logical line, not earlier noise.
+        assert!(!joined.contains("noise"));
+    }
+
+    #[test]
+    fn scroll_mode_starts_from_scroll_line() {
+        let lines = vec!["a".into(), "b".into(), "c".into(), "d".into()];
+        let rows = visible_output_rows(&lines, 80, 2, false, 2);
+        assert_eq!(rows, vec!["c".to_string(), "d".to_string()]);
     }
 }

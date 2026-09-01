@@ -15,7 +15,8 @@ pub use cmake::{
 };
 pub use config::{AppConfig, ConfigOptions, PresetOverrideConfig};
 pub use ctest::{
-    test_all_steps, CommandStep, CtestCase, CtestDiscovery, CtestRunCommand, TestStatus,
+    ctest_output_indicates_failure, test_all_steps, CommandStep, CtestCase, CtestDiscovery,
+    CtestRunCommand, TestStatus,
 };
 pub use env_file::{load_env_file, EnvOverlay};
 pub use error::{Error, Result};

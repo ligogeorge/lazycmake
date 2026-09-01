@@ -7,7 +7,7 @@ use ratatui::widgets::{
 };
 use ratatui::Frame;
 
-use crate::output::truncate_for_preview;
+use crate::output::{truncate_for_preview, visible_output_rows};
 use crate::App;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -254,19 +254,21 @@ fn truncate_pad(text: &str, width: usize) -> String {
 
 fn draw_output(frame: &mut Frame, area: Rect, app: &App) {
     let inner_height = area.height.saturating_sub(2) as usize;
-    let max_start = app.output.len().saturating_sub(inner_height.max(1));
-    let start = if app.output_follow {
-        max_start
-    } else {
-        app.output_scroll.min(max_start)
-    };
-    let lines: Vec<Line> = app
+    // borders (2) + horizontal padding (2)
+    let inner_width = area.width.saturating_sub(4) as usize;
+    let preview: Vec<String> = app
         .output
         .iter()
-        .skip(start)
-        .take(inner_height)
-        .map(|l| Line::from(truncate_for_preview(l)))
+        .map(|l| truncate_for_preview(l))
         .collect();
+    let rows = visible_output_rows(
+        &preview,
+        inner_width.max(1),
+        inner_height,
+        app.output_follow,
+        app.output_scroll,
+    );
+    let lines: Vec<Line> = rows.into_iter().map(Line::from).collect();
     let follow = if app.output_follow { "follow" } else { "scroll" };
     let block = bordered_block(Line::from(format!("Output [{follow}] — press o for full")));
     frame.render_widget(Paragraph::new(lines).block(block), area);
@@ -274,35 +276,34 @@ fn draw_output(frame: &mut Frame, area: Rect, app: &App) {
 
 fn draw_output_fullscreen(frame: &mut Frame, area: Rect, app: &App) {
     let inner_height = area.height.saturating_sub(2) as usize;
-    let max_start = app.output.len().saturating_sub(inner_height.max(1));
+    let inner_width = area.width.saturating_sub(4) as usize;
+    let rows = visible_output_rows(
+        &app.output,
+        inner_width.max(1),
+        inner_height,
+        app.output_follow,
+        app.output_scroll,
+    );
     let start = if app.output_follow {
-        max_start
+        app.output.len().saturating_sub(inner_height.max(1))
     } else {
-        app.output_scroll.min(max_start)
+        app.output_scroll
+            .min(app.output.len().saturating_sub(inner_height.max(1)))
     };
-    let lines: Vec<Line> = app
-        .output
-        .iter()
-        .skip(start)
-        .take(inner_height)
-        .map(|l| Line::from(l.as_str()))
-        .collect();
+    let lines: Vec<Line> = rows.into_iter().map(Line::from).collect();
     let pos = if app.output.is_empty() {
         0
     } else {
-        start + 1
+        start.saturating_add(1)
     };
     let follow = if app.output_follow { "follow" } else { "scroll" };
     let block = bordered_block(Line::from(format!(
         "Output [{follow}] [{pos}/{} lines]",
         app.output.len()
     )));
-    frame.render_widget(
-        Paragraph::new(lines)
-            .block(block)
-            .wrap(Wrap { trim: false }),
-        area,
-    );
+    // Soft-wrap is applied in visible_output_rows; do not wrap again in Paragraph
+    // or the newest lines get clipped off the bottom.
+    frame.render_widget(Paragraph::new(lines).block(block), area);
 }
 
 fn draw_output_status(frame: &mut Frame, area: Rect, app: &App) {

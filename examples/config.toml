@@ -9,6 +9,8 @@
 
 [general]
 default_preset = "default"
+# Directory for state.json (relative to project root). Default: .lazycmake
+# state_dir = ".zed/.lazycmake"
 
 # ---------------------------------------------------------------------------
 # Tests column

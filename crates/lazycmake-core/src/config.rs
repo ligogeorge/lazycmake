@@ -28,6 +28,9 @@ pub struct AppConfig {
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct GeneralConfig {
     pub default_preset: Option<String>,
+    /// Directory for `state.json` (relative to project root, or absolute).
+    /// Defaults to `.lazycmake` when unset.
+    pub state_dir: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -97,6 +100,22 @@ impl AppConfig {
 
     pub fn curated_test_presets(&self) -> Option<&Vec<String>> {
         self.testing.curated_presets.as_ref()
+    }
+
+    /// Resolve where `state.json` is stored.
+    ///
+    /// Uses `[general].state_dir` when set (supports `${sourceDir}` / `$env{…}`),
+    /// otherwise `.lazycmake` under the project root.
+    pub fn resolve_state_path(&self, project_root: &Path) -> Result<PathBuf> {
+        let raw = self.general.state_dir.as_deref().unwrap_or(".lazycmake");
+        let expanded = expand_string(raw, project_root, "")?;
+        let dir = PathBuf::from(expanded);
+        let dir = if dir.is_absolute() {
+            dir
+        } else {
+            project_root.join(dir)
+        };
+        Ok(dir.join("state.json"))
     }
 
     /// Configure preset that backs the Tests column / `t`/`T` actions.
@@ -238,6 +257,9 @@ fn merge_config(base: &mut AppConfig, contents: &str) -> Result<()> {
     if overlay.general.default_preset.is_some() {
         base.general.default_preset = overlay.general.default_preset;
     }
+    if overlay.general.state_dir.is_some() {
+        base.general.state_dir = overlay.general.state_dir;
+    }
     if overlay.testing.curated_presets.is_some() {
         base.testing.curated_presets = overlay.testing.curated_presets;
     }
@@ -257,6 +279,22 @@ fn merge_config(base: &mut AppConfig, contents: &str) -> Result<()> {
 mod tests {
     use super::*;
     use std::fs;
+
+    #[test]
+    fn resolve_state_path_defaults_and_honors_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut config = AppConfig::default();
+        assert_eq!(
+            config.resolve_state_path(dir.path()).unwrap(),
+            dir.path().join(".lazycmake/state.json")
+        );
+
+        config.general.state_dir = Some(".zed/.lazycmake".into());
+        assert_eq!(
+            config.resolve_state_path(dir.path()).unwrap(),
+            dir.path().join(".zed/.lazycmake/state.json")
+        );
+    }
 
     #[test]
     fn merge_local_overrides_global_defaults() {

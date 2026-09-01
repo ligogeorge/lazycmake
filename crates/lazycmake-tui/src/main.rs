@@ -7,9 +7,10 @@ use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScree
 use crossterm::{cursor, ExecutableCommand};
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use lazycmake_core::{
-    clean_cache, ensure_codemodel_query, executable_path, load_targets, test_all_steps, BuildCommand,
-    Capabilities, ColumnState, CommandStep, ConfigOptions, ConfigureCommand, CtestDiscovery,
-    CodemodelTarget, EnvOverlay, FocusedColumn, Generator, PersistedState, Project,
+    clean_cache, ctest_output_indicates_failure, ensure_codemodel_query, executable_path,
+    load_targets, test_all_steps, BuildCommand, Capabilities, ColumnState, CommandStep,
+    ConfigOptions, ConfigureCommand, CtestDiscovery, CodemodelTarget, EnvOverlay, FocusedColumn,
+    Generator, PersistedState, Project,
 };
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
@@ -68,6 +69,7 @@ pub struct App {
     pub targets: Vec<CodemodelTarget>,
     pub tests: CtestDiscovery,
     pub state: PersistedState,
+    pub state_path: PathBuf,
     pub selected_preset: Option<String>,
     pub binary_dir: Option<PathBuf>,
     pub generator: Generator,
@@ -114,7 +116,9 @@ fn main() -> anyhow::Result<()> {
         })
         .unwrap_or_default();
 
-    let mut state = PersistedState::load(&project.root)?;
+    let state_path = project.config.resolve_state_path(&project.root)?;
+    let legacy_state = project.root.join(".lazycmake/state.json");
+    let mut state = PersistedState::load_with_fallbacks(&state_path, &[&legacy_state])?;
     if let Some(default) = project.config.general.default_preset.clone() {
         if state.last_preset.is_none() {
             state.last_preset = Some(default);
@@ -134,6 +138,7 @@ fn main() -> anyhow::Result<()> {
         targets: Vec::new(),
         tests: CtestDiscovery { cases: Vec::new() },
         state,
+        state_path,
         selected_preset: None,
         binary_dir: None,
         generator: Generator::Ninja,
@@ -159,7 +164,7 @@ fn main() -> anyhow::Result<()> {
     app.state.tests.filter.clear();
 
     run_tui(&mut app)?;
-    app.state.save(&app.project.root)?;
+    app.state.save_to(&app.state_path)?;
     Ok(())
 }
 
@@ -222,9 +227,13 @@ fn run_tui_loop(
                 app.job_running = false;
                 job_rx = None;
                 app.force_redraw = true;
-                let failed = code != 0 || app.output_indicates_test_failure();
+                let is_test_job =
+                    matches!(app.pending_job, Some(JobKind::TestOne | JobKind::TestAll));
+                let failed = code != 0
+                    || (is_test_job
+                        && ctest_output_indicates_failure(&app.output.join("\n")));
                 if failed {
-                    if matches!(app.pending_job, Some(JobKind::TestOne | JobKind::TestAll)) {
+                    if is_test_job {
                         app.tests.apply_run_output(&app.output.join("\n"));
                     }
                     app.pending_job = None;
@@ -342,15 +351,6 @@ impl App {
         if apply_test_output {
             self.tests.apply_run_output(&self.output.join("\n"));
         }
-    }
-
-    fn output_indicates_test_failure(&self) -> bool {
-        self.output.iter().any(|line| {
-            line.contains("***Failed")
-                || line.contains("tests failed")
-                || line.contains("Tests failed")
-                || line.contains("Errors while running CTest")
-        })
     }
 
     /// Binary dir of the configure preset that backs the Tests column.

@@ -186,6 +186,23 @@ fn parse_final_summary_line(line: &str) -> Option<FinalSummary> {
     Some(FinalSummary { failed, total })
 }
 
+/// Whether captured ctest/cmake output indicates a failed test run.
+///
+/// Important: success summaries contain the substring `0 tests failed`, so a naive
+/// `contains("tests failed")` check is wrong.
+pub fn ctest_output_indicates_failure(output: &str) -> bool {
+    let mut summary_failed = None;
+    for line in output.lines() {
+        if line.contains("***Failed") || line.contains("Errors while running CTest") {
+            return true;
+        }
+        if let Some(summary) = parse_final_summary_line(line) {
+            summary_failed = Some(summary.failed);
+        }
+    }
+    summary_failed.is_some_and(|failed| failed > 0)
+}
+
 fn apply_final_summary(discovery: &mut CtestDiscovery, summary: FinalSummary) {
     if summary.total != discovery.cases.len() {
         return;
@@ -574,6 +591,27 @@ Total Tests: 2
         assert_eq!(TestStatus::Fail.glyph(false), "x");
         assert_eq!(TestStatus::Skip.glyph(false), "o");
         assert_eq!(TestStatus::Unknown.glyph(false), "-");
+    }
+
+    #[test]
+    fn ctest_output_indicates_failure_ignores_zero_failed_summary() {
+        let passed = "\
+1/1 Test #1: FooTest ................   Passed    0.01 sec
+
+100% tests passed, 0 tests failed out of 1
+";
+        assert!(!ctest_output_indicates_failure(passed));
+
+        let failed = "\
+1/1 Test #1: FooTest ................***Failed    0.01 sec
+
+0% tests passed, 1 tests failed out of 1
+";
+        assert!(ctest_output_indicates_failure(failed));
+
+        assert!(ctest_output_indicates_failure(
+            "Errors while running CTest\n"
+        ));
     }
 
     #[test]

@@ -188,8 +188,7 @@ Config is optional. Without it, lazycmake still lists presets and works for ordi
 
 Later files **merge over** earlier ones (maps are unioned; scalars replaced).
 
-Runtime UI state is stored in `<project>/.lazycmake/state.json` (last preset, scroll positions, etc.). Add that path to `.gitignore`.
-
+Runtime UI state is stored in `<project>/<state_dir>/state.json` (default `state_dir = ".lazycmake"`). Configure via `[general].state_dir`. On first run it still reads a legacy `.lazycmake/state.json` if the configured path is missing.
 ### Example `config.toml`
 
 See also [`examples/config.toml`](examples/config.toml).
@@ -197,7 +196,9 @@ See also [`examples/config.toml`](examples/config.toml).
 ```toml
 [general]
 # Selected on first launch if state.json has no last preset
-default_preset = "tests"
+default_preset = "default"
+# Directory for state.json (relative to project root). Default: .lazycmake
+# state_dir = ".zed/.lazycmake"
 
 # --- Tests column ----------------------------------------------------------
 # When set, the Tests column always uses these configure preset(s), even if

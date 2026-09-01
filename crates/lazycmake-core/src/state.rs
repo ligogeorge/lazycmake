@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
@@ -32,12 +32,7 @@ pub struct PersistedState {
 }
 
 impl PersistedState {
-    pub fn path(project_root: &Path) -> PathBuf {
-        project_root.join(".lazycmake/state.json")
-    }
-
-    pub fn load(project_root: &Path) -> Result<Self> {
-        let path = Self::path(project_root);
+    pub fn load_from(path: &Path) -> Result<Self> {
         if !path.exists() {
             return Ok(Self::default());
         }
@@ -45,11 +40,25 @@ impl PersistedState {
         Ok(serde_json::from_str(&contents)?)
     }
 
-    pub fn save(&self, project_root: &Path) -> Result<()> {
-        let dir = project_root.join(".lazycmake");
-        std::fs::create_dir_all(&dir)?;
+    /// Load from `path`, falling back to `legacy_paths` when the primary file is missing.
+    pub fn load_with_fallbacks(path: &Path, legacy_paths: &[&Path]) -> Result<Self> {
+        if path.exists() {
+            return Self::load_from(path);
+        }
+        for legacy in legacy_paths {
+            if legacy.exists() {
+                return Self::load_from(legacy);
+            }
+        }
+        Ok(Self::default())
+    }
+
+    pub fn save_to(&self, path: &Path) -> Result<()> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
         let contents = serde_json::to_string_pretty(self)?;
-        std::fs::write(dir.join("state.json"), contents)?;
+        std::fs::write(path, contents)?;
         Ok(())
     }
 }
@@ -61,7 +70,8 @@ mod tests {
     #[test]
     fn load_missing_state_returns_default() {
         let dir = tempfile::tempdir().unwrap();
-        let state = PersistedState::load(dir.path()).unwrap();
+        let path = dir.path().join("missing/state.json");
+        let state = PersistedState::load_from(&path).unwrap();
         assert!(state.last_preset.is_none());
         assert_eq!(state.focused_column, FocusedColumn::Presets);
         assert!(!state.tests_failing_only);
@@ -70,20 +80,38 @@ mod tests {
     #[test]
     fn save_and_load_roundtrip() {
         let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("custom/state.json");
         let mut state = PersistedState::default();
         state.last_preset = Some("tests".into());
         state.last_target = Some("tracker_app".into());
         state.focused_column = FocusedColumn::Tests;
         state.tests.selected = 7;
         state.tests_failing_only = true;
-        state.save(dir.path()).unwrap();
+        state.save_to(&path).unwrap();
 
-        let loaded = PersistedState::load(dir.path()).unwrap();
+        let loaded = PersistedState::load_from(&path).unwrap();
         assert_eq!(loaded.last_preset.as_deref(), Some("tests"));
         assert_eq!(loaded.last_target.as_deref(), Some("tracker_app"));
         assert_eq!(loaded.focused_column, FocusedColumn::Tests);
         assert_eq!(loaded.tests.selected, 7);
         assert!(loaded.tests_failing_only);
-        assert_eq!(PersistedState::path(dir.path()), dir.path().join(".lazycmake/state.json"));
+        assert!(path.exists());
+    }
+
+    #[test]
+    fn load_falls_back_to_legacy_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let primary = dir.path().join("primary/state.json");
+        let legacy = dir.path().join("legacy/state.json");
+        std::fs::create_dir_all(legacy.parent().unwrap()).unwrap();
+        let mut state = PersistedState::default();
+        state.last_preset = Some("legacy".into());
+        std::fs::write(&legacy, serde_json::to_string_pretty(&state).unwrap()).unwrap();
+
+        let loaded = PersistedState::load_with_fallbacks(&primary, &[&legacy]).unwrap();
+        assert_eq!(loaded.last_preset.as_deref(), Some("legacy"));
+
+        loaded.save_to(&primary).unwrap();
+        assert!(primary.exists());
     }
 }
