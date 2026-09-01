@@ -1,0 +1,19 @@
+{
+  "configurations": [
+    {
+      "name": "Debug",
+      "targets": [
+        {
+          "name": "hello",
+          "type": "EXECUTABLE",
+          "artifacts": [{ "path": "hello" }]
+        },
+        {
+          "name": "hello_lib",
+          "type": "STATIC_LIBRARY",
+          "artifacts": [{ "path": "libhello_lib.a" }]
+        }
+      ]
+    }
+  ]
+}

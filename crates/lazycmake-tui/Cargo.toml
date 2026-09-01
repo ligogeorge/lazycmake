@@ -1,0 +1,23 @@
+[package]
+name = "lazycmake-tui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "lazycmake"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+crossterm.workspace = true
+crossbeam-channel.workspace = true
+lazycmake-core = { path = "../lazycmake-core" }
+ratatui.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tempfile = "3.14"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
