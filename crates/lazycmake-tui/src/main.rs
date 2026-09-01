@@ -914,8 +914,8 @@ fn handle_filter_key(
                 _ => {}
             }
         }
-        KeyCode::Up | KeyCode::Char('k') => app.move_selection(SelectionMove::Up),
-        KeyCode::Down | KeyCode::Char('j') => app.move_selection(SelectionMove::Down),
+        KeyCode::Up => app.move_selection(SelectionMove::Up),
+        KeyCode::Down => app.move_selection(SelectionMove::Down),
         KeyCode::Backspace => {
             app.filter_input.pop();
             let query = app.filter_input.clone();
