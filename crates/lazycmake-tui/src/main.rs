@@ -23,7 +23,8 @@ mod ui;
 use filter::FilterIndex;
 use job::run_job_captured;
 use output::{
-    apply_output_scroll, leave_fullscreen_output, sanitize_line, OutputScroll,
+    apply_output_scroll, format_job_footer, job_title_label, leave_fullscreen_output, sanitize_line,
+    JobOutcome, OutputScroll,
 };
 use ui::{draw, ConfirmAction, DrawState, Mode};
 
@@ -82,6 +83,10 @@ pub struct App {
     pub job_running: bool,
     pub(crate) pending_job: Option<JobKind>,
     pub status_message: String,
+    pub last_job_outcome: Option<JobOutcome>,
+    pub last_job_summary: String,
+    /// Index into `output` where the current job's captured lines begin.
+    job_output_start: usize,
     pub preset_filter: FilterIndex,
     pub target_filter: FilterIndex,
     pub test_filter: FilterIndex,
@@ -151,6 +156,9 @@ fn main() -> anyhow::Result<()> {
         job_running: false,
         pending_job: None,
         status_message: String::new(),
+        last_job_outcome: None,
+        last_job_summary: String::new(),
+        job_output_start: 0,
         unicode_glyphs: true,
         force_redraw: false,
     };
@@ -227,24 +235,27 @@ fn run_tui_loop(
                 app.job_running = false;
                 job_rx = None;
                 app.force_redraw = true;
+                let job_output = app.current_job_output();
                 let is_test_job =
                     matches!(app.pending_job, Some(JobKind::TestOne | JobKind::TestAll));
                 let failed = code != 0
-                    || (is_test_job
-                        && ctest_output_indicates_failure(&app.output.join("\n")));
+                    || (is_test_job && ctest_output_indicates_failure(&job_output));
                 if failed {
                     if is_test_job {
-                        app.tests.apply_run_output(&app.output.join("\n"));
+                        app.tests.apply_run_output(&job_output);
                     }
                     app.pending_job = None;
-                    app.status_message = if code != 0 {
+                    let summary = if code != 0 {
                         format!("Command failed (exit {code})")
                     } else {
                         "Tests failed".into()
                     };
+                    app.status_message = summary.clone();
+                    app.record_job_finish(JobOutcome::Failed, &summary);
                 } else {
                     app.on_job_success();
                     app.status_message.clear();
+                    app.record_job_finish(JobOutcome::Success, "Finished successfully");
                 }
             }
         }
@@ -263,6 +274,10 @@ fn run_tui_loop(
 }
 
 impl App {
+    fn current_job_output(&self) -> String {
+        self.output.get(self.job_output_start..).unwrap_or(&[]).join("\n")
+    }
+
     fn push_output(&mut self, line: String) {
         let Some(line) = sanitize_line(&line) else {
             return;
@@ -282,6 +297,16 @@ impl App {
             viewport,
             action,
         );
+    }
+
+    fn record_job_finish(&mut self, outcome: JobOutcome, detail: &str) {
+        self.last_job_outcome = Some(outcome);
+        self.last_job_summary = job_title_label(outcome, self.unicode_glyphs, detail);
+        self.push_output(format_job_footer(
+            outcome,
+            self.unicode_glyphs,
+            detail,
+        ));
     }
 
     fn select_preset(&mut self, name: &str) {
@@ -460,7 +485,7 @@ impl App {
         self.refresh_targets();
         self.refresh_tests();
         if apply_test_output {
-            self.tests.apply_run_output(&self.output.join("\n"));
+            self.tests.apply_run_output(&self.current_job_output());
         }
     }
 
@@ -774,7 +799,14 @@ impl App {
 fn report_job_error(app: &mut App, err: &anyhow::Error) {
     let msg = format!("Error: {err}");
     app.push_output(msg.clone());
-    app.status_message = msg;
+    app.status_message = msg.clone();
+    app.last_job_outcome = Some(JobOutcome::Failed);
+    app.last_job_summary = job_title_label(JobOutcome::Failed, app.unicode_glyphs, &msg);
+    app.push_output(format_job_footer(
+        JobOutcome::Failed,
+        app.unicode_glyphs,
+        &msg,
+    ));
     app.force_redraw = true;
 }
 
@@ -792,6 +824,9 @@ fn spawn_job(app: &mut App, kind: JobKind) -> Option<Receiver<AppEvent>> {
     }
     app.job_running = true;
     app.pending_job = Some(kind);
+    app.job_output_start = app.output.len();
+    app.last_job_outcome = None;
+    app.last_job_summary.clear();
     app.force_redraw = true;
     for step in &steps {
         let cwd_display = step.cwd.display();

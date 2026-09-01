@@ -191,16 +191,23 @@ fn parse_final_summary_line(line: &str) -> Option<FinalSummary> {
 /// Important: success summaries contain the substring `0 tests failed`, so a naive
 /// `contains("tests failed")` check is wrong.
 pub fn ctest_output_indicates_failure(output: &str) -> bool {
+    if output.contains("Errors while running CTest") {
+        return true;
+    }
     let mut summary_failed = None;
+    let mut saw_failed_progress = false;
     for line in output.lines() {
-        if line.contains("***Failed") || line.contains("Errors while running CTest") {
-            return true;
+        if line.contains("***Failed") {
+            saw_failed_progress = true;
         }
         if let Some(summary) = parse_final_summary_line(line) {
             summary_failed = Some(summary.failed);
         }
     }
-    summary_failed.is_some_and(|failed| failed > 0)
+    if let Some(failed) = summary_failed {
+        return failed > 0;
+    }
+    saw_failed_progress
 }
 
 fn apply_final_summary(discovery: &mut CtestDiscovery, summary: FinalSummary) {
@@ -611,6 +618,22 @@ Total Tests: 2
 
         assert!(ctest_output_indicates_failure(
             "Errors while running CTest\n"
+        ));
+    }
+
+    #[test]
+    fn ctest_output_indicates_failure_ignores_stale_failed_progress_when_summary_passes() {
+        let accumulated = "\
+1/1 Test #1: BarkDetectionTest ................***Failed    0.26 sec
+
+0% tests passed, 1 tests failed out of 1
+$ (cd build && ctest --output-on-failure -R BarkDetectionTest)
+1/1 Test #1: BarkDetectionTest ................   Passed    0.26 sec
+
+100% tests passed, 0 tests failed out of 1
+";
+        assert!(!ctest_output_indicates_failure(
+            accumulated.split("$ (cd build").nth(1).unwrap_or("")
         ));
     }
 

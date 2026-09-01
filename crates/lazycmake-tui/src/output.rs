@@ -1,5 +1,60 @@
 const PREVIEW_MAX_CHARS: usize = 200;
 
+const JOB_OK_PREFIX: &str = "::ok::";
+const JOB_ERR_PREFIX: &str = "::err::";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum JobOutcome {
+    Success,
+    Failed,
+}
+
+/// Marker prefix + timestamped status appended to the output buffer when a job ends.
+pub fn format_job_footer(outcome: JobOutcome, unicode: bool, detail: &str) -> String {
+    let glyph = job_glyph(outcome, unicode);
+    let prefix = match outcome {
+        JobOutcome::Success => JOB_OK_PREFIX,
+        JobOutcome::Failed => JOB_ERR_PREFIX,
+    };
+    let timestamp = chrono::Local::now().format("%H:%M:%S");
+    format!("{prefix}[{timestamp}] {glyph} {detail}")
+}
+
+/// Short label for the Output pane title bar.
+pub fn job_title_label(outcome: JobOutcome, unicode: bool, detail: &str) -> String {
+    let glyph = job_glyph(outcome, unicode);
+    match outcome {
+        JobOutcome::Success => format!("{glyph} Finished successfully"),
+        JobOutcome::Failed => format!("{glyph} {detail}"),
+    }
+}
+
+pub fn job_glyph(outcome: JobOutcome, unicode: bool) -> &'static str {
+    match (outcome, unicode) {
+        (JobOutcome::Success, true) => "✓",
+        (JobOutcome::Failed, true) => "✗",
+        (JobOutcome::Success, false) => "+",
+        (JobOutcome::Failed, false) => "x",
+    }
+}
+
+pub fn output_line_style(line: &str) -> Option<ratatui::style::Style> {
+    use ratatui::style::{Color, Modifier, Style};
+    if line.starts_with(JOB_OK_PREFIX) {
+        return Some(Style::default().fg(Color::Green).add_modifier(Modifier::BOLD));
+    }
+    if line.starts_with(JOB_ERR_PREFIX) {
+        return Some(Style::default().fg(Color::Red).add_modifier(Modifier::BOLD));
+    }
+    None
+}
+
+pub fn output_line_display(line: &str) -> &str {
+    line.strip_prefix(JOB_OK_PREFIX)
+        .or_else(|| line.strip_prefix(JOB_ERR_PREFIX))
+        .unwrap_or(line)
+}
+
 /// Normalize a subprocess line for TUI display.
 ///
 /// CMake/CTest often emit:
@@ -45,28 +100,42 @@ pub fn wrap_to_width(line: &str, width: usize) -> Vec<String> {
         .collect()
 }
 
-/// Build the visible output rows for a viewport.
+fn wrap_line_to_widgets(line: &str, width: usize) -> Vec<ratatui::text::Line<'static>> {
+    use ratatui::text::{Line, Span};
+    let style = output_line_style(line);
+    let display = output_line_display(line);
+    wrap_to_width(display, width)
+        .into_iter()
+        .map(|chunk| {
+            if let Some(style) = style {
+                Line::from(Span::styled(chunk, style))
+            } else {
+                Line::from(chunk)
+            }
+        })
+        .collect()
+}
+
+/// Build visible output rows for a viewport, preserving job-result styling.
 ///
 /// When `follow` is true, fills from the **end** of the buffer so the newest
-/// content stays on screen even if soft-wrapping expands long lines. The old
-/// fullscreen path took the last N *logical* lines and then wrapped them,
-/// which pushed the real tail (errors) below the clip region.
-pub fn visible_output_rows(
+/// content stays on screen even if soft-wrapping expands long lines.
+pub fn visible_output_widgets(
     lines: &[String],
     width: usize,
     height: usize,
     follow: bool,
     scroll: usize,
-) -> Vec<String> {
+) -> Vec<ratatui::text::Line<'static>> {
     if height == 0 || lines.is_empty() {
         return Vec::new();
     }
     let width = width.max(1);
 
     if follow {
-        let mut rows_rev: Vec<String> = Vec::new();
+        let mut rows_rev: Vec<ratatui::text::Line<'static>> = Vec::new();
         for line in lines.iter().rev() {
-            let mut wrapped = wrap_to_width(line, width);
+            let mut wrapped = wrap_line_to_widgets(line, width);
             while let Some(row) = wrapped.pop() {
                 rows_rev.push(row);
                 if rows_rev.len() >= height {
@@ -79,9 +148,9 @@ pub fn visible_output_rows(
         return rows_rev;
     }
 
-    let mut rows: Vec<String> = Vec::new();
+    let mut rows: Vec<ratatui::text::Line<'static>> = Vec::new();
     for line in lines.iter().skip(scroll) {
-        for row in wrap_to_width(line, width) {
+        for row in wrap_line_to_widgets(line, width) {
             rows.push(row);
             if rows.len() >= height {
                 return rows;
@@ -186,6 +255,25 @@ fn strip_controls_and_ansi(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ratatui::text::Line;
+
+    fn widget_text_rows(
+        lines: &[String],
+        width: usize,
+        height: usize,
+        follow: bool,
+        scroll: usize,
+    ) -> Vec<String> {
+        visible_output_widgets(lines, width, height, follow, scroll)
+            .into_iter()
+            .map(|line: Line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect()
+    }
 
     #[test]
     fn keeps_last_carriage_return_segment() {
@@ -196,6 +284,31 @@ mod tests {
     fn strips_ansi_and_skips_empty() {
         assert_eq!(sanitize_line("\x1b[31mred\x1b[0m").as_deref(), Some("red"));
         assert_eq!(sanitize_line("   ").as_deref(), None);
+    }
+
+    #[test]
+    fn job_footer_renders_with_status_color() {
+        let ok = format_job_footer(JobOutcome::Success, true, "Finished successfully");
+        assert!(ok.starts_with(JOB_OK_PREFIX));
+        assert!(output_line_style(&ok).is_some());
+        assert!(output_line_display(&ok).contains("✓ Finished successfully"));
+        assert!(output_line_display(&ok).contains('[') && output_line_display(&ok).contains(']'));
+
+        let err = format_job_footer(JobOutcome::Failed, true, "Failed (exit 2)");
+        assert!(output_line_style(&err).is_some());
+        assert!(output_line_display(&err).contains("✗ Failed (exit 2)"));
+    }
+
+    #[test]
+    fn job_title_label_uses_short_success_text() {
+        assert_eq!(
+            job_title_label(JobOutcome::Success, true, "ignored"),
+            "✓ Finished successfully"
+        );
+        assert_eq!(
+            job_title_label(JobOutcome::Failed, true, "Failed (exit 2)"),
+            "✗ Failed (exit 2)"
+        );
     }
 
     #[test]
@@ -243,7 +356,7 @@ mod tests {
             "x".repeat(30),
             "CMake Error: Ninja not found".into(),
         ];
-        let rows = visible_output_rows(&lines, 10, 4, true, 0);
+        let rows = widget_text_rows(&lines, 10, 4, true, 0);
         assert_eq!(rows.len(), 4);
         let joined = rows.join("");
         assert!(
@@ -257,7 +370,7 @@ mod tests {
     #[test]
     fn scroll_mode_starts_from_scroll_line() {
         let lines = vec!["a".into(), "b".into(), "c".into(), "d".into()];
-        let rows = visible_output_rows(&lines, 80, 2, false, 2);
+        let rows = widget_text_rows(&lines, 80, 2, false, 2);
         assert_eq!(rows, vec!["c".to_string(), "d".to_string()]);
     }
 }

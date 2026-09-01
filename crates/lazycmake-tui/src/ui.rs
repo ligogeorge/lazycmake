@@ -7,7 +7,7 @@ use ratatui::widgets::{
 };
 use ratatui::Frame;
 
-use crate::output::{truncate_for_preview, visible_output_rows};
+use crate::output::{truncate_for_preview, visible_output_widgets, JobOutcome};
 use crate::App;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -261,23 +261,25 @@ fn draw_output(frame: &mut Frame, area: Rect, app: &App) {
         .iter()
         .map(|l| truncate_for_preview(l))
         .collect();
-    let rows = visible_output_rows(
+    let lines = visible_output_widgets(
         &preview,
         inner_width.max(1),
         inner_height,
         app.output_follow,
         app.output_scroll,
     );
-    let lines: Vec<Line> = rows.into_iter().map(Line::from).collect();
     let follow = if app.output_follow { "follow" } else { "scroll" };
-    let block = bordered_block(Line::from(format!("Output [{follow}] — press o for full")));
+    let block = bordered_block(output_title(
+        app,
+        &format!("Output [{follow}] — press o for full"),
+    ));
     frame.render_widget(Paragraph::new(lines).block(block), area);
 }
 
 fn draw_output_fullscreen(frame: &mut Frame, area: Rect, app: &App) {
     let inner_height = area.height.saturating_sub(2) as usize;
     let inner_width = area.width.saturating_sub(4) as usize;
-    let rows = visible_output_rows(
+    let lines = visible_output_widgets(
         &app.output,
         inner_width.max(1),
         inner_height,
@@ -290,27 +292,41 @@ fn draw_output_fullscreen(frame: &mut Frame, area: Rect, app: &App) {
         app.output_scroll
             .min(app.output.len().saturating_sub(inner_height.max(1)))
     };
-    let lines: Vec<Line> = rows.into_iter().map(Line::from).collect();
     let pos = if app.output.is_empty() {
         0
     } else {
         start.saturating_add(1)
     };
-    let follow = if app.output_follow { "follow" } else { "scroll" };
-    let block = bordered_block(Line::from(format!(
-        "Output [{follow}] [{pos}/{} lines]",
-        app.output.len()
-    )));
-    // Soft-wrap is applied in visible_output_rows; do not wrap again in Paragraph
-    // or the newest lines get clipped off the bottom.
+    let base = format!("Output [{pos}/{} lines]", app.output.len());
+    let block = bordered_block(output_title(app, &base));
     frame.render_widget(Paragraph::new(lines).block(block), area);
+}
+
+fn output_title(app: &App, base: &str) -> Line<'static> {
+    if app.job_running {
+        return Line::from(format!("{base}  …"));
+    }
+    let Some(outcome) = app.last_job_outcome else {
+        return Line::from(base.to_string());
+    };
+    let color = match outcome {
+        JobOutcome::Success => Color::Green,
+        JobOutcome::Failed => Color::Red,
+    };
+    Line::from(vec![
+        Span::raw(format!("{base}  ")),
+        Span::styled(
+            app.last_job_summary.clone(),
+            Style::default().fg(color).add_modifier(Modifier::BOLD),
+        ),
+    ])
 }
 
 fn draw_output_status(frame: &mut Frame, area: Rect, app: &App) {
     let follow = if app.output_follow { "on" } else { "off" };
-    let line = Line::from(vec![
-        Span::raw(format!("[o/Esc] back  [↑↓/jk] scroll  [PgUp/PgDn] page  [g/G] top/bottom  [f] follow={follow}  [q] quit")),
-    ]);
+    let line = Line::from(vec![Span::raw(format!(
+        "[o/Esc] back  [↑↓/jk] scroll  [PgUp/PgDn] page  [g/G] top/bottom  [f] follow={follow}  [q] quit"
+    ))]);
     frame.render_widget(Paragraph::new(line), area);
 }
 
@@ -331,22 +347,18 @@ fn draw_filter_bar(frame: &mut Frame, area: Rect, app: &App) {
 
 fn draw_status(frame: &mut Frame, area: Rect, app: &App) {
     let preset = app.selected_preset.as_deref().unwrap_or("-");
-    let msg = if app.job_running {
-        "Running…".to_string()
-    } else {
-        app.status_message.clone()
-    };
-    let msg_style = if msg.starts_with("Error:") || msg.contains("failed") {
-        Style::default().fg(Color::Red)
-    } else {
-        Style::default()
-    };
-    let line = Line::from(vec![
-        Span::raw(format!("Preset: {preset}  ")),
-        Span::styled(msg, msg_style),
-        Span::raw("  [↑↓] Move  [Enter] Act  [c] Configure  [b] Build  [t/T] Test  [o] Output  [?] Help  [q] Quit"),
-    ]);
-    frame.render_widget(Paragraph::new(line), area);
+    let mut spans = vec![Span::raw(format!("Preset: {preset}"))];
+    if !app.job_running && !app.status_message.is_empty() {
+        spans.push(Span::raw("  "));
+        spans.push(Span::styled(
+            app.status_message.clone(),
+            Style::default().fg(Color::Red),
+        ));
+    }
+    spans.push(Span::raw(
+        "  [↑↓] Move  [Enter] Act  [c] Configure  [b] Build  [t/T] Test  [o] Output  [?] Help  [q] Quit",
+    ));
+    frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
 fn draw_help(frame: &mut Frame) {
