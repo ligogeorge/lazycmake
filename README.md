@@ -110,24 +110,23 @@ Press `?` at any time for the in-app help overlay.
 ## User interface
 
 ```
-┌─ Presets ────────┬─ Targets ────────────────┬─ Tests ──────────────────────┐
-│> tests           │> all               [oth] │> FooTest                  ✓  │
-│  debug           │  my_app            [exe] │  BarTest                  ✗  │
-│  release         │  my_lib            [lib] │  BazTest                  -  │
-│[2/12]            │[3/40]                    │[1/200]  ✓ 1  ✗ 1  - 198     │
-└──────────────────┴──────────────────────────┴──────────────────────────────┘
-┌─ Output ───────────────────────────────────────────────────────────────────┐
-│ $ cmake --preset tests                                                     │
-│ $ cmake --build build-test --parallel 16                                   │
-└────────────────────────────────────────────────────────────────────────────┘
+┌─ Presets (3) [1/3] ──┬─ Targets (40) [1/40] ─┬─ Tests  ✓ 1  ✗ 1  ◌ 0  - 198 [1/200] ─┐
+│> tests               │> all            [oth] │> ✓ FooTest                            │
+│  debug               │  my_app         [exe] │  ✗ BarTest                            │
+│  release             │  my_lib         [lib] │  - BazTest                            │
+└──────────────────────┴───────────────────────┴───────────────────────────────────────┘
+┌─ Output [follow] — press o for full ─────────────────────────────────────────────────┐
+│ $ cmake --preset tests                                                               │
+│ $ cmake --build build-test --parallel 16                                             │
+└──────────────────────────────────────────────────────────────────────────────────────┘
  Preset: tests   [↑↓] Move  [Enter] …  [o] Output  [?] Help  [q] Quit
 ```
 
 | Column | Contents |
 |--------|----------|
-| **Presets** | Configure presets (alphabetical). Overrides can reveal otherwise-hidden presets. |
-| **Targets** | File API targets after configure. Kinds: `exe` / `lib` / `utl` / `oth`. |
-| **Tests** | CTest cases for the active testing preset / binary dir. |
+| **Presets** | Configure presets (alphabetical). Title shows `(total)` or `[visible/total]` when filtered; `[pos/total]` is the cursor. Overrides can reveal otherwise-hidden presets. |
+| **Targets** | File API targets after configure. Kinds: `exe` / `lib` / `utl` / `oth`. Same title counters as Presets. |
+| **Tests** | CTest cases for the active testing preset / binary dir. Title shows live tallies (`✓` / `✗` / `◌` / `-`) plus `[pos/total]`. Glyph is **left** of the name. |
 
 Status glyphs: `✓` pass · `✗` fail · `◌` skip · `-` not run (ASCII fallbacks `+` / `x` / `o` / `-` when needed).
 

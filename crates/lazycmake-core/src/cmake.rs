@@ -166,15 +166,15 @@ impl ConfigureCommand {
             .clone()
             .or_else(|| preset.generator.clone());
 
-        // Sysbuild-style overrides (`source_dir` set) own the -D set entirely.
-        // Cache-only overlays merge on top of the preset's variables.
-        let mut vars = if ov.source_dir.is_some() {
-            std::collections::HashMap::new()
-        } else {
-            preset.cache_variables.clone()
-        };
+        // Always start from the preset's cache variables, then overlay.
+        // Sysbuild still needs APP_DIR/BOARD from the override, but must keep
+        // CMAKE_BUILD_TYPE (and anything else) from CMakePresets.json.
+        let mut vars = preset.cache_variables.clone();
         for (k, v) in &ov.cache_variables {
             vars.insert(k.clone(), expand_string(v, project_root, &preset.name)?);
+        }
+        if !vars.contains_key("CMAKE_BUILD_TYPE") {
+            vars.insert("CMAKE_BUILD_TYPE".into(), "Debug".into());
         }
         let mut cache_variables: Vec<(String, String)> = vars.into_iter().collect();
         cache_variables.sort_by(|a, b| a.0.cmp(&b.0));
@@ -374,8 +374,62 @@ mod tests {
                 "Ninja".into(),
                 "-DAPP_DIR=/proj/tracker-application".into(),
                 "-DBOARD=trv8@1/nrf54l15/cpuapp/s115_softdevice/mcuboot".into(),
+                "-DCMAKE_BUILD_TYPE=Debug".into(),
             ]
         );
+    }
+
+    #[test]
+    fn for_preset_sysbuild_override_can_replace_build_type() {
+        std::env::set_var("ZEPHYR_BASE", "/opt/zephyr");
+        let preset = ResolvedConfigurePreset {
+            name: "TRV8-2Full".into(),
+            display_name: None,
+            description: None,
+            generator: Some("Ninja".into()),
+            binary_dir: PathBuf::from("build-nrfbm"),
+            cache_variables: [("CMAKE_BUILD_TYPE".into(), "Debug".into())].into(),
+            hidden: true,
+        };
+        let ov = PresetOverrideConfig {
+            source_dir: Some("$env{ZEPHYR_BASE}/share/sysbuild".into()),
+            cache_variables: [
+                ("APP_DIR".into(), "${sourceDir}".into()),
+                ("CMAKE_BUILD_TYPE".into(), "Release".into()),
+            ]
+            .into(),
+            ..Default::default()
+        };
+        let root = Path::new("/proj");
+        let cmd = ConfigureCommand::for_preset(&preset, &root.join("build-nrfbm"), Some(&ov), root)
+            .unwrap();
+        let args = cmd.argv(root);
+        assert!(args.contains(&"-DCMAKE_BUILD_TYPE=Release".to_string()));
+        assert!(!args.contains(&"-DCMAKE_BUILD_TYPE=Debug".to_string()));
+    }
+
+    #[test]
+    fn for_preset_sysbuild_defaults_build_type_to_debug() {
+        std::env::set_var("ZEPHYR_BASE", "/opt/zephyr");
+        let preset = ResolvedConfigurePreset {
+            name: "BoardX".into(),
+            display_name: None,
+            description: None,
+            generator: Some("Ninja".into()),
+            binary_dir: PathBuf::from("build"),
+            cache_variables: Default::default(),
+            hidden: true,
+        };
+        let ov = PresetOverrideConfig {
+            source_dir: Some("$env{ZEPHYR_BASE}/share/sysbuild".into()),
+            cache_variables: [("APP_DIR".into(), "${sourceDir}".into())].into(),
+            ..Default::default()
+        };
+        let root = Path::new("/proj");
+        let cmd = ConfigureCommand::for_preset(&preset, &root.join("build"), Some(&ov), root)
+            .unwrap();
+        let args = cmd.argv(root);
+        assert!(args.contains(&"-DCMAKE_BUILD_TYPE=Debug".to_string()));
     }
 
     #[test]
