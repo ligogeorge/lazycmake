@@ -1,0 +1,51 @@
+# Example lazycmake config
+#
+# Copy to one of:
+#   ~/.config/lazycmake/config.toml
+#   <project>/.lazycmake/config.toml
+#   <project>/.zed/.lazycmake/config.toml
+#
+# Or pass: lazycmake --config /path/to/this/file
+
+[general]
+default_preset = "default"
+
+# ---------------------------------------------------------------------------
+# Tests column
+# ---------------------------------------------------------------------------
+# curated_presets: when set, Tests always follow these configure presets
+# (even if another preset is selected for builds).
+[testing]
+curated_presets = ["tests"]
+
+[testing.presets.tests]
+# Optional subdirectory for ctest --test-dir (relative to project root).
+# If omitted, the testing preset's binaryDir is used.
+test_dir = "build-test/src/tests"
+# Extra ctest flags. Bare "--parallel" is filled with the host core count.
+extra_args = ["--output-on-failure", "--parallel"]
+
+# ---------------------------------------------------------------------------
+# Per-preset configure overrides
+# ---------------------------------------------------------------------------
+# Use when `cmake --preset NAME` is not enough (custom -S, extra -D, env).
+#
+# [presets.overrides.<ExactPresetName>]
+#   env_file          = path to a shell script to source (bash); optional
+#   env               = map of extra environment variables; optional
+#   source_dir        = -S path (enables manual configure instead of --preset)
+#   generator         = -G value; optional
+#   cache_variables   = -DKEY=VALUE map
+#
+# Macros in string values: ${sourceDir}, ${presetName}, $env{VAR}, $penv{VAR}
+#
+# Example — toolchain env only for this preset's configure/build/run:
+#
+# [presets.overrides.EmbeddedBoard]
+# env_file = "$env{TOOLCHAIN_ENV_FILE}"
+# source_dir = "$env{SDK_ROOT}/share/sysbuild"
+# cache_variables = { APP_DIR = "${sourceDir}", BOARD = "my_board" }
+
+[ui]
+# Reserved for future themes
+theme = "dark"

@@ -1,0 +1,6 @@
+{
+  "tests": [
+    { "name": "test_a" },
+    { "name": "test_b" }
+  ]
+}
