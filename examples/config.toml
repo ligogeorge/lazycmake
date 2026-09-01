@@ -9,6 +9,12 @@
 
 [general]
 default_preset = "default"
+# Default build target when the Targets column loads (e.g. all, tracker_app).
+# default_target = "all"
+
+# Per-preset override (optional):
+# [presets.overrides.TRV8-2Full]
+# default_target = "mcuboot"
 # Directory for state.json (relative to project root). Default: .lazycmake
 # state_dir = ".zed/.lazycmake"
 
@@ -38,6 +44,7 @@ extra_args = ["--output-on-failure", "--parallel"]
 #   source_dir        = -S path (enables manual configure instead of --preset)
 #   generator         = -G value; optional
 #   cache_variables   = -DKEY=VALUE map
+#   default_target    = default build target when this preset is selected
 #
 # Macros in string values: ${sourceDir}, ${presetName}, $env{VAR}, $penv{VAR}
 #

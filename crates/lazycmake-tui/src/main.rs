@@ -299,7 +299,7 @@ impl App {
             }
         }
 
-        self.refresh_targets();
+        self.refresh_targets_after_preset_change();
         self.refresh_tests();
     }
 
@@ -340,6 +340,14 @@ impl App {
     }
 
     fn refresh_targets(&mut self) {
+        self.refresh_targets_inner(false);
+    }
+
+    fn refresh_targets_after_preset_change(&mut self) {
+        self.refresh_targets_inner(true);
+    }
+
+    fn refresh_targets_inner(&mut self, reselect: bool) {
         let Some(binary_dir) = self.binary_dir.clone() else {
             self.targets.clear();
             self.target_filter = FilterIndex::new(Vec::new());
@@ -364,6 +372,67 @@ impl App {
         let names: Vec<String> = targets.iter().map(|t| t.name.clone()).collect();
         self.target_filter = FilterIndex::new(names);
         self.targets = targets;
+        self.apply_target_selection(reselect);
+    }
+
+    /// Select the configured or remembered target after the target list changes.
+    fn apply_target_selection(&mut self, reselect: bool) {
+        let visible = self.target_filter.visible_indices();
+        if visible.is_empty() {
+            self.state.targets.selected = 0;
+            return;
+        }
+
+        if !reselect {
+            if let Some(current) = self
+                .target_filter
+                .selected_item(self.state.targets.selected)
+                .cloned()
+            {
+                if self.targets.iter().any(|t| t.name == current) {
+                    if let Some(pos) = visible.iter().position(|&idx| {
+                        self.target_filter
+                            .items()
+                            .get(idx)
+                            .is_some_and(|n| n == &current)
+                    }) {
+                        self.state.targets.selected = pos;
+                        return;
+                    }
+                }
+            }
+        }
+
+        let candidates = [
+            self.project
+                .config
+                .resolve_default_target(self.selected_preset.as_deref())
+                .map(str::to_string),
+            self.state.last_target.clone(),
+        ];
+
+        for name in candidates.into_iter().flatten() {
+            if let Some(pos) = visible.iter().position(|&idx| {
+                self.target_filter
+                    .items()
+                    .get(idx)
+                    .is_some_and(|n| n == &name)
+            }) {
+                self.state.targets.selected = pos;
+                return;
+            }
+        }
+
+        if let Some(pos) = visible.iter().position(|&idx| {
+            self.target_filter
+                .items()
+                .get(idx)
+                .is_some_and(|n| n == "all")
+        }) {
+            self.state.targets.selected = pos;
+        } else {
+            self.state.targets.selected = 0;
+        }
     }
 
     fn refresh_tests(&mut self) {

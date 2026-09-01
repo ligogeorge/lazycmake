@@ -28,6 +28,8 @@ pub struct AppConfig {
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct GeneralConfig {
     pub default_preset: Option<String>,
+    /// Default build target when none is selected yet (e.g. `all`, `tracker_app`).
+    pub default_target: Option<String>,
     /// Directory for `state.json` (relative to project root, or absolute).
     /// Defaults to `.lazycmake` when unset.
     pub state_dir: Option<String>,
@@ -61,6 +63,8 @@ pub struct PresetOverrideConfig {
     pub generator: Option<String>,
     #[serde(default)]
     pub cache_variables: HashMap<String, String>,
+    /// Default build target when this preset is selected (overrides `[general].default_target`).
+    pub default_target: Option<String>,
     /// Extra environment variables for configure/build/run of this preset.
     /// Values may use `$env{NAME}` / `${sourceDir}` macros.
     #[serde(default)]
@@ -177,6 +181,22 @@ impl AppConfig {
 
     pub fn preset_override(&self, name: &str) -> Option<&PresetOverrideConfig> {
         self.presets.overrides.get(name)
+    }
+
+    /// Preferred default build target for a configure preset.
+    ///
+    /// Per-preset `[presets.overrides.<name>].default_target` wins over
+    /// `[general].default_target`.
+    pub fn resolve_default_target(&self, preset_name: Option<&str>) -> Option<&str> {
+        if let Some(name) = preset_name {
+            if let Some(target) = self
+                .preset_override(name)
+                .and_then(|ov| ov.default_target.as_deref())
+            {
+                return Some(target);
+            }
+        }
+        self.general.default_target.as_deref()
     }
 
     pub fn has_preset_override(&self, name: &str) -> bool {
@@ -421,6 +441,26 @@ extra_args = ["--output-on-failure", "--parallel"]
             root,
         );
         assert_eq!(dir, Some(root.join("build-test/src/tests")));
+    }
+
+    #[test]
+    fn resolve_default_target_prefers_preset_override() {
+        let mut config = AppConfig::default();
+        config.general.default_target = Some("all".into());
+        config.presets.overrides.insert(
+            "TRV8-2Full".into(),
+            PresetOverrideConfig {
+                default_target: Some("mcuboot".into()),
+                ..Default::default()
+            },
+        );
+
+        assert_eq!(
+            config.resolve_default_target(Some("TRV8-2Full")),
+            Some("mcuboot")
+        );
+        assert_eq!(config.resolve_default_target(Some("TRV7-2Full")), Some("all"));
+        assert_eq!(config.resolve_default_target(None), Some("all"));
     }
 
     #[test]
