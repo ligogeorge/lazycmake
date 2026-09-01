@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use clap::Parser;
@@ -7,10 +7,10 @@ use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScree
 use crossterm::{cursor, ExecutableCommand};
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use lazycmake_core::{
-    clean_cache, ctest_output_indicates_failure, ensure_codemodel_query, executable_path,
-    load_targets, test_all_steps, BuildCommand, Capabilities, ColumnState, CommandStep,
-    ConfigOptions, ConfigureCommand, CtestDiscovery, CodemodelTarget, EnvOverlay, FocusedColumn,
-    Generator, PersistedState, Project,
+    clean_cache, cmake_cache_matches_preset, ctest_output_indicates_failure, ensure_codemodel_query,
+    executable_path, load_targets, test_all_steps, BuildCommand, Capabilities, ColumnState,
+    CommandStep, ConfigOptions, ConfigureCommand, CtestDiscovery, CodemodelTarget, EnvOverlay,
+    FocusedColumn, Generator, PersistedState, Project,
 };
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
@@ -303,6 +303,42 @@ impl App {
         self.refresh_tests();
     }
 
+    fn preset_is_configured(&self) -> bool {
+        let Some(binary_dir) = self.binary_dir.as_ref() else {
+            return false;
+        };
+        if !binary_dir.join("CMakeCache.txt").exists() {
+            return false;
+        }
+        self.cache_matches_selected_preset(binary_dir)
+    }
+
+    fn cache_matches_selected_preset(&self, binary_dir: &Path) -> bool {
+        let Some(name) = self.selected_preset.as_deref() else {
+            return false;
+        };
+        let Some(store) = &self.project.presets else {
+            return false;
+        };
+        let Some(preset) = store.get(name) else {
+            return false;
+        };
+        let override_cfg = self.project.config.preset_override(name);
+        cmake_cache_matches_preset(
+            binary_dir,
+            preset,
+            override_cfg,
+            &self.project.root,
+        )
+        .unwrap_or(false)
+    }
+
+    /// Select a preset; returns true when configure should run so targets can load.
+    fn select_preset_on_enter(&mut self, name: &str) -> bool {
+        self.select_preset(name);
+        !self.preset_is_configured()
+    }
+
     fn refresh_targets(&mut self) {
         let Some(binary_dir) = self.binary_dir.clone() else {
             self.targets.clear();
@@ -311,6 +347,12 @@ impl App {
         };
 
         if !binary_dir.join("CMakeCache.txt").exists() {
+            self.targets.clear();
+            self.target_filter = FilterIndex::new(Vec::new());
+            return;
+        }
+
+        if !self.cache_matches_selected_preset(&binary_dir) {
             self.targets.clear();
             self.target_filter = FilterIndex::new(Vec::new());
             return;
@@ -546,8 +588,10 @@ impl App {
                     .selected_preset
                     .clone()
                     .ok_or_else(|| anyhow::anyhow!("no preset selected"))?;
-                if clean {
-                    if let Some(dir) = &self.binary_dir {
+                if let Some(dir) = &self.binary_dir {
+                    let stale = dir.join("CMakeCache.txt").exists()
+                        && !self.cache_matches_selected_preset(dir);
+                    if clean || stale {
                         clean_cache(dir)?;
                     }
                 }
@@ -768,9 +812,10 @@ fn handle_key(
                 .selected_item(app.state.presets.selected)
                 .cloned()
             {
-                app.select_preset(&name);
-                if let Some(rx) = spawn_job(app, JobKind::Configure { clean: false }) {
-                    *job_rx = Some(rx);
+                if app.select_preset_on_enter(&name) {
+                    if let Some(rx) = spawn_job(app, JobKind::Configure { clean: false }) {
+                        *job_rx = Some(rx);
+                    }
                 }
             }
         }
@@ -892,9 +937,10 @@ fn handle_filter_key(
                         .selected_item(app.state.presets.selected)
                         .cloned()
                     {
-                        app.select_preset(&name);
-                        if let Some(rx) = spawn_job(app, JobKind::Configure { clean: false }) {
-                            *job_rx = Some(rx);
+                        if app.select_preset_on_enter(&name) {
+                            if let Some(rx) = spawn_job(app, JobKind::Configure { clean: false }) {
+                                *job_rx = Some(rx);
+                            }
                         }
                     }
                 }

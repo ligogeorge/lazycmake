@@ -324,7 +324,7 @@ fn draw_filter_bar(frame: &mut Frame, area: Rect, app: &App) {
         Span::styled(format!("Filter {column}: /"), Style::default().add_modifier(Modifier::BOLD)),
         Span::raw(app.filter_input.as_str()),
         Span::styled("_", Style::default().add_modifier(Modifier::SLOW_BLINK)),
-        Span::raw("  [Enter] configure/build/run  [Esc] cancel"),
+        Span::raw("  [Enter] select/build/run  [Esc] cancel"),
     ]);
     frame.render_widget(Paragraph::new(line), area);
 }
@@ -344,59 +344,77 @@ fn draw_status(frame: &mut Frame, area: Rect, app: &App) {
     let line = Line::from(vec![
         Span::raw(format!("Preset: {preset}  ")),
         Span::styled(msg, msg_style),
-        Span::raw("  [↑↓] Move  [Enter] Configure/Build/Test  [o] Output  [c] Configure  [b] Build  [t] Test  [?] Help  [q] Quit"),
+        Span::raw("  [↑↓] Move  [Enter] Act  [c] Configure  [b] Build  [t/T] Test  [o] Output  [?] Help  [q] Quit"),
     ]);
     frame.render_widget(Paragraph::new(line), area);
 }
 
 fn draw_help(frame: &mut Frame) {
-    let area = centered_rect(64, 70, frame.area());
+    let area = centered_rect(68, 78, frame.area());
     frame.render_widget(Clear, area);
 
     let key = |k: &str, desc: &str| {
         Line::from(vec![
             Span::styled(
-                format!("  {k:<16}"),
+                format!("  {k:<18}"),
                 Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
             ),
             Span::raw(desc.to_string()),
         ])
     };
 
+    let section = |title: &'static str| {
+        Line::from(Span::styled(
+            title,
+            Style::default().add_modifier(Modifier::BOLD).fg(Color::Yellow),
+        ))
+    };
+
     let text = vec![
-        Line::from(Span::styled(
-            " Navigation",
-            Style::default().add_modifier(Modifier::BOLD).fg(Color::Yellow),
-        )),
-        key("↑↓ / j k", "move selection"),
-        key("Tab / Shift+Tab", "cycle columns"),
-        key("PgUp/PgDn", "page lists"),
-        key("Home / End", "top / bottom"),
+        section(" Navigation"),
+        key("↑↓ / j k", "move selection in focused column"),
+        key("Tab / Shift+Tab", "focus Presets → Targets → Tests"),
+        key("PgUp / PgDn", "page up / down in list"),
+        key("Home / End", "first / last item in list"),
         key("/", "filter focused column"),
-        key("F", "failing-only (Tests)"),
         Line::from(""),
-        Line::from(Span::styled(
-            " Actions",
-            Style::default().add_modifier(Modifier::BOLD).fg(Color::Yellow),
-        )),
-        key("Enter", "configure / build / run test"),
-        key("c / C", "configure (C = clean cache)"),
-        key("b / B", "build (B = clean build)"),
-        key("r", "run selected executable"),
-        key("t / T", "test one / all"),
-        key("o", "fullscreen output"),
-        key("g / G", "output top / bottom (fullscreen)"),
+        section(" Presets"),
+        key("Enter", "select preset (auto-configure if needed)"),
+        key("c", "configure selected preset"),
+        key("C", "clean cache, then reconfigure (confirm)"),
         Line::from(""),
-        Line::from(Span::styled(
-            " General",
-            Style::default().add_modifier(Modifier::BOLD).fg(Color::Yellow),
-        )),
+        section(" Targets"),
+        key("Enter / b", "build selected target"),
+        key("B", "clean build, then build target (confirm)"),
+        key("r", "run selected executable target"),
+        Line::from(""),
+        section(" Tests"),
+        key("Enter / t", "run selected test"),
+        key("T", "run all tests"),
+        key("F", "toggle failing-only filter"),
+        Line::from(""),
+        section(" Output"),
+        key("o", "open fullscreen output"),
+        key("↑↓ / j k", "scroll (fullscreen)"),
+        key("PgUp / PgDn", "page scroll (fullscreen)"),
+        key("g / G", "jump to top / bottom (fullscreen)"),
+        key("f", "toggle follow mode (fullscreen)"),
+        key("Esc / o", "close fullscreen output"),
+        Line::from(""),
+        section(" Filter (after /)"),
+        key("type", "narrow the focused list"),
+        key("↑↓", "move selection while filtering"),
+        key("Enter", "apply filter and run column action"),
+        key("Esc", "cancel filter"),
+        Line::from(""),
+        section(" General"),
         key("?", "this help"),
-        key("Esc", "close help / cancel"),
+        key("Esc", "close help / cancel confirm"),
         key("q", "quit"),
     ];
 
-    let block = bordered_block(Line::from("Help")).style(Style::default().bg(Color::Black));
+    let block = bordered_block(Line::from("Help — press Esc to close"))
+        .style(Style::default().bg(Color::Black));
     frame.render_widget(
         Paragraph::new(text)
             .block(block)

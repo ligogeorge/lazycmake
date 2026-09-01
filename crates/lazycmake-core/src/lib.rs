@@ -1,4 +1,5 @@
 pub mod cmake;
+pub mod cmake_cache;
 pub mod config;
 pub mod ctest;
 pub mod env_file;
@@ -13,6 +14,7 @@ pub use cmake::{
     clean_cache, ensure_parallel_jobs, max_job_count, run_command, BuildCommand, Capabilities,
     ConfigureCommand, Generator,
 };
+pub use cmake_cache::{cmake_cache_matches_preset, effective_configure_cache_variables};
 pub use config::{AppConfig, ConfigOptions, PresetOverrideConfig};
 pub use ctest::{
     ctest_output_indicates_failure, test_all_steps, CommandStep, CtestCase, CtestDiscovery,

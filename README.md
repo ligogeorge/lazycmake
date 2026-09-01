@@ -99,7 +99,7 @@ lazycmake --project ~/src/my-project
 lazycmake -C ~/src/my-project --config ~/src/my-project/.lazycmake
 ```
 
-1. Select a **preset** → `Enter` or `c` to configure  
+1. Select a **preset** → `Enter` selects (auto-configures if needed); `c` to configure  
 2. Select a **target** → `b` to build, `r` to run (executables)  
 3. Select a **test** → `t` to build/run that test; `T` to build all then run the full suite  
 
@@ -149,7 +149,7 @@ Status glyphs: `✓` pass · `✗` fail · `◌` skip · `-` not run (ASCII fall
 
 | Key | Action |
 |-----|--------|
-| `Enter` | Context action: configure / build / run selected test |
+| `Enter` | Presets: select (configure if not yet configured) · Targets: build · Tests: run selected test |
 | `c` | Configure selected preset |
 | `C` | Delete `CMakeCache.txt` + `CMakeFiles/`, then reconfigure (confirm) |
 | `b` | Build selected target (`all` = default Ninja target) |

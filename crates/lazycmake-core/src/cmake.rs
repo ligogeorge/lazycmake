@@ -4,6 +4,7 @@ use std::process::Command;
 use crate::config::PresetOverrideConfig;
 use crate::error::{Error, Result};
 use crate::presets::{expand_string, ResolvedConfigurePreset};
+use crate::cmake_cache::effective_configure_cache_variables;
 
 /// Logical CPU count for `--parallel` / `-j` (at least 1).
 pub fn max_job_count() -> usize {
@@ -166,16 +167,7 @@ impl ConfigureCommand {
             .clone()
             .or_else(|| preset.generator.clone());
 
-        // Always start from the preset's cache variables, then overlay.
-        // Sysbuild still needs APP_DIR/BOARD from the override, but must keep
-        // CMAKE_BUILD_TYPE (and anything else) from CMakePresets.json.
-        let mut vars = preset.cache_variables.clone();
-        for (k, v) in &ov.cache_variables {
-            vars.insert(k.clone(), expand_string(v, project_root, &preset.name)?);
-        }
-        if !vars.contains_key("CMAKE_BUILD_TYPE") {
-            vars.insert("CMAKE_BUILD_TYPE".into(), "Debug".into());
-        }
+        let vars = effective_configure_cache_variables(preset, Some(ov), project_root)?;
         let mut cache_variables: Vec<(String, String)> = vars.into_iter().collect();
         cache_variables.sort_by(|a, b| a.0.cmp(&b.0));
 
