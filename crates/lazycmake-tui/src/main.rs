@@ -23,8 +23,8 @@ mod ui;
 use filter::FilterIndex;
 use job::run_job_captured;
 use output::{
-    apply_output_scroll, format_job_footer, job_title_label, leave_fullscreen_output, sanitize_line,
-    JobOutcome, OutputScroll,
+    apply_output_scroll, format_job_footer, job_title_label, leave_fullscreen_output,
+    push_output_line, sanitize_line, JobOutcome, OutputScroll,
 };
 use ui::{draw, ConfirmAction, DrawState, Mode};
 
@@ -69,6 +69,8 @@ pub struct App {
     pub preset_names: Vec<String>,
     pub targets: Vec<CodemodelTarget>,
     pub tests: CtestDiscovery,
+    /// Test dir the current `tests` were discovered from (statuses are only valid for it).
+    tests_dir: Option<PathBuf>,
     pub state: PersistedState,
     pub state_path: PathBuf,
     pub selected_preset: Option<String>,
@@ -142,6 +144,7 @@ fn main() -> anyhow::Result<()> {
         preset_names,
         targets: Vec::new(),
         tests: CtestDiscovery { cases: Vec::new() },
+        tests_dir: None,
         state,
         state_path,
         selected_preset: None,
@@ -282,11 +285,12 @@ impl App {
         let Some(line) = sanitize_line(&line) else {
             return;
         };
-        if self.output.len() >= 10_000 {
-            self.output.remove(0);
-            self.output_scroll = self.output_scroll.saturating_sub(1);
-        }
-        self.output.push(line);
+        push_output_line(
+            &mut self.output,
+            &mut self.output_scroll,
+            &mut self.job_output_start,
+            line,
+        );
     }
 
     fn scroll_output(&mut self, action: OutputScroll, viewport: usize) {
@@ -461,20 +465,35 @@ impl App {
     }
 
     fn refresh_tests(&mut self) {
-        self.tests = CtestDiscovery { cases: Vec::new() };
-        self.test_filter = FilterIndex::new(Vec::new());
-
         let Ok(test_dir) = self.resolve_test_dir() else {
+            self.clear_tests();
             return;
         };
         if !test_dir.exists() {
+            self.clear_tests();
             return;
         }
-        if let Ok(tests) = CtestDiscovery::discover(&test_dir, self.capabilities.ctest_json) {
-            let names: Vec<String> = tests.cases.iter().map(|c| c.name.clone()).collect();
-            self.test_filter = FilterIndex::new(names);
-            self.tests = tests;
+        let Ok(mut tests) = CtestDiscovery::discover(&test_dir, self.capabilities.ctest_json) else {
+            self.clear_tests();
+            return;
+        };
+
+        // Selecting or configuring another preset rediscovers the same suite; results
+        // of tests that already ran stay valid as long as the test dir is unchanged.
+        if self.tests_dir.as_deref() == Some(test_dir.as_path()) {
+            tests.carry_over_statuses(&self.tests);
         }
+
+        let names: Vec<String> = tests.cases.iter().map(|c| c.name.clone()).collect();
+        self.test_filter = FilterIndex::new(names);
+        self.tests = tests;
+        self.tests_dir = Some(test_dir);
+    }
+
+    fn clear_tests(&mut self) {
+        self.tests = CtestDiscovery { cases: Vec::new() };
+        self.test_filter = FilterIndex::new(Vec::new());
+        self.tests_dir = None;
     }
 
     fn on_job_success(&mut self) {

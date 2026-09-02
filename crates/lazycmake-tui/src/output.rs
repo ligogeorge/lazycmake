@@ -1,5 +1,8 @@
 const PREVIEW_MAX_CHARS: usize = 200;
 
+/// Logical lines kept in the output buffer before the oldest are dropped.
+pub const OUTPUT_LINE_CAP: usize = 10_000;
+
 const JOB_OK_PREFIX: &str = "::ok::";
 const JOB_ERR_PREFIX: &str = "::err::";
 
@@ -211,6 +214,24 @@ pub fn apply_output_scroll(
     }
 }
 
+/// Append a line, dropping the oldest ones past the cap.
+///
+/// Both `scroll` and `job_start` index into `lines`, so they shift with the drop —
+/// a stale `job_start` would make the current job's output read as empty.
+pub fn push_output_line(
+    lines: &mut Vec<String>,
+    scroll: &mut usize,
+    job_start: &mut usize,
+    line: String,
+) {
+    if let Some(dropped) = (lines.len() + 1).checked_sub(OUTPUT_LINE_CAP) {
+        lines.drain(..dropped.min(lines.len()));
+        *scroll = scroll.saturating_sub(dropped);
+        *job_start = job_start.saturating_sub(dropped);
+    }
+    lines.push(line);
+}
+
 /// Leaving fullscreen returns the main Output pane to live tailing.
 pub fn leave_fullscreen_output(follow: &mut bool) {
     *follow = true;
@@ -365,6 +386,19 @@ mod tests {
         );
         // Last visible content comes from the final logical line, not earlier noise.
         assert!(!joined.contains("noise"));
+    }
+
+    #[test]
+    fn trimming_the_ring_keeps_the_job_slice_anchored() {
+        let mut lines: Vec<String> = (0..OUTPUT_LINE_CAP).map(|i| i.to_string()).collect();
+        let mut scroll = OUTPUT_LINE_CAP;
+        let mut job_start = lines.len();
+
+        push_output_line(&mut lines, &mut scroll, &mut job_start, "ctest line".into());
+
+        assert_eq!(lines.len(), OUTPUT_LINE_CAP);
+        assert_eq!(scroll, OUTPUT_LINE_CAP - 1);
+        assert_eq!(&lines[job_start..], ["ctest line".to_string()]);
     }
 
     #[test]

@@ -97,50 +97,31 @@ impl CtestDiscovery {
     }
 
     pub fn apply_run_output(&mut self, output: &str) {
-        for case in &mut self.cases {
-            case.status = TestStatus::Unknown;
+        let (statuses, final_summary) = parse_run_output(self, output);
+
+        // Only a run covering the whole suite may drop earlier results: a filtered
+        // run (single test) says nothing about the cases it never executed.
+        if final_summary.is_some_and(|summary| summary.total == self.cases.len()) {
+            for case in &mut self.cases {
+                case.status = TestStatus::Unknown;
+            }
         }
 
-        let mut section = SummarySection::None;
-        let mut final_summary: Option<FinalSummary> = None;
-        for line in output.lines() {
-            let line = line.trim();
-            if line.is_empty() {
-                continue;
-            }
-
-            if line.starts_with("The following tests passed") {
-                section = SummarySection::Passed;
-                continue;
-            }
-            if line.starts_with("The following tests FAILED") {
-                section = SummarySection::Failed;
-                continue;
-            }
-
-            if let Some(summary) = parse_final_summary_line(line) {
-                final_summary = Some(summary);
-            }
-
-            if let Some((name, status)) = parse_progress_line(line) {
-                set_status(self, &name, status);
-                continue;
-            }
-
-            if let Some((name, status)) = parse_numbered_summary_line(line) {
-                set_status(self, &name, status);
-                continue;
-            }
-
-            if matches!(section, SummarySection::Passed) && is_case_name(self, line) {
-                set_status(self, line, TestStatus::Pass);
-            } else if matches!(section, SummarySection::Failed) && is_case_name(self, line) {
-                set_status(self, line, TestStatus::Fail);
-            }
+        for (name, status) in statuses {
+            set_status(self, &name, status);
         }
 
         if let Some(summary) = final_summary {
             apply_final_summary(self, summary);
+        }
+    }
+
+    /// Carry statuses of same-named cases over a rediscovery of the same suite.
+    pub fn carry_over_statuses(&mut self, previous: &Self) {
+        for case in &mut self.cases {
+            if let Some(prev) = previous.cases.iter().find(|prev| prev.name == case.name) {
+                case.status = prev.status;
+            }
         }
     }
 
@@ -159,6 +140,54 @@ impl CtestDiscovery {
         }
         (pass, fail, skip, unknown)
     }
+}
+
+/// Statuses named by a ctest run, plus its final summary line if it printed one.
+fn parse_run_output(
+    discovery: &CtestDiscovery,
+    output: &str,
+) -> (Vec<(String, TestStatus)>, Option<FinalSummary>) {
+    let mut statuses = Vec::new();
+    let mut section = SummarySection::None;
+    let mut final_summary = None;
+
+    for line in output.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+
+        if line.starts_with("The following tests passed") {
+            section = SummarySection::Passed;
+            continue;
+        }
+        if line.starts_with("The following tests FAILED") {
+            section = SummarySection::Failed;
+            continue;
+        }
+
+        if let Some(summary) = parse_final_summary_line(line) {
+            final_summary = Some(summary);
+        }
+
+        if let Some((name, status)) = parse_progress_line(line) {
+            statuses.push((name, status));
+            continue;
+        }
+
+        if let Some((name, status)) = parse_numbered_summary_line(line) {
+            statuses.push((name, status));
+            continue;
+        }
+
+        if matches!(section, SummarySection::Passed) && is_case_name(discovery, line) {
+            statuses.push((line.to_string(), TestStatus::Pass));
+        } else if matches!(section, SummarySection::Failed) && is_case_name(discovery, line) {
+            statuses.push((line.to_string(), TestStatus::Fail));
+        }
+    }
+
+    (statuses, final_summary)
 }
 
 fn set_status(discovery: &mut CtestDiscovery, name: &str, status: TestStatus) {
@@ -635,6 +664,82 @@ $ (cd build && ctest --output-on-failure -R BarkDetectionTest)
         assert!(!ctest_output_indicates_failure(
             accumulated.split("$ (cd build").nth(1).unwrap_or("")
         ));
+    }
+
+    #[test]
+    fn carry_over_statuses_keeps_results_of_rediscovered_cases() {
+        let previous = CtestDiscovery {
+            cases: vec![
+                CtestCase {
+                    name: "AlphaTest".into(),
+                    status: TestStatus::Pass,
+                },
+                CtestCase {
+                    name: "BetaTest".into(),
+                    status: TestStatus::Fail,
+                },
+            ],
+        };
+        let mut rediscovered = CtestDiscovery {
+            cases: vec![
+                CtestCase {
+                    name: "AlphaTest".into(),
+                    status: TestStatus::Unknown,
+                },
+                CtestCase {
+                    name: "BetaTest".into(),
+                    status: TestStatus::Unknown,
+                },
+                CtestCase {
+                    name: "NewTest".into(),
+                    status: TestStatus::Unknown,
+                },
+            ],
+        };
+
+        rediscovered.carry_over_statuses(&previous);
+
+        assert_eq!(rediscovered.cases[0].status, TestStatus::Pass);
+        assert_eq!(rediscovered.cases[1].status, TestStatus::Fail);
+        assert_eq!(rediscovered.cases[2].status, TestStatus::Unknown);
+    }
+
+    #[test]
+    fn apply_run_output_of_single_test_keeps_other_statuses() {
+        let mut discovery = CtestDiscovery {
+            cases: vec![
+                CtestCase {
+                    name: "AlphaTest".into(),
+                    status: TestStatus::Pass,
+                },
+                CtestCase {
+                    name: "BetaTest".into(),
+                    status: TestStatus::Fail,
+                },
+            ],
+        };
+
+        discovery.apply_run_output(
+            "1/1 Test #1: BetaTest ...........   Passed    0.02 sec\n\
+             100% tests passed, 0 tests failed out of 1\n",
+        );
+
+        assert_eq!(discovery.cases[0].status, TestStatus::Pass);
+        assert_eq!(discovery.cases[1].status, TestStatus::Pass);
+    }
+
+    #[test]
+    fn apply_run_output_without_parsable_lines_keeps_statuses() {
+        let mut discovery = CtestDiscovery {
+            cases: vec![CtestCase {
+                name: "AlphaTest".into(),
+                status: TestStatus::Pass,
+            }],
+        };
+
+        discovery.apply_run_output("");
+
+        assert_eq!(discovery.cases[0].status, TestStatus::Pass);
     }
 
     #[test]
